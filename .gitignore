@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+*.local
+.vite
+
+# Skills instaladas por npx skills add (no forman parte del sitio)
+.agents/
+.claude/skills/
+skills-lock.json

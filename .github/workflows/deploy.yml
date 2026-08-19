@@ -1,0 +1,46 @@
+name: Deploy a GitHub Pages
+
+on:
+  push:
+    branches: [claude/website-pdf-requirements-hq0viv, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # GitHub Pages sirve el sitio bajo /<repo>/, por eso el base con el nombre del repositorio.
+      - run: npm run build
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+      # SPA: 404.html replica index.html para que las rutas directas funcionen.
+      - run: cp dist/index.html dist/404.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
