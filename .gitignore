@@ -8,3 +8,5 @@ dist
 .agents/
 .claude/skills/
 skills-lock.json
+Rubbycorp/
+*.bundle
