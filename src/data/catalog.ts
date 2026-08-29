@@ -5,6 +5,19 @@ export type Department = {
   tagline: string
 }
 
+export type QuestionType = 'texto' | 'parrafo' | 'numero' | 'fecha' | 'opciones'
+
+/** Pregunta que el cliente responde al pedir una cotización. */
+export type Question = {
+  id: string
+  label: string
+  type: QuestionType
+  required?: boolean
+  placeholder?: string
+  /** Solo para type: 'opciones'. */
+  options?: string[]
+}
+
 export type Product = {
   id: string
   name: string
@@ -13,6 +26,10 @@ export type Product = {
   compareAt?: number
   unit: string
   note?: string
+  /** true = no se vende con precio fijo: se pide cotización antes de pagar. */
+  quote?: boolean
+  /** Preguntas propias del producto. Si falta, se usa el preset del departamento. */
+  questions?: Question[]
 }
 
 /** Los 12 departamentos del brief (pág. 5 del PDF). */
@@ -38,6 +55,7 @@ const p = (
   unit: string,
   compareAt?: number,
   note?: string,
+  extra?: Pick<Product, 'quote' | 'questions'>,
 ): Product => ({
   id: `${dept}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
   name,
@@ -46,7 +64,80 @@ const p = (
   compareAt,
   unit,
   note,
+  ...extra,
 })
+
+const q = (
+  id: string,
+  label: string,
+  type: QuestionType = 'texto',
+  extra?: Omit<Question, 'id' | 'label' | 'type'>,
+): Question => ({ id, label, type, ...extra })
+
+/**
+ * Presets de preguntas por departamento.
+ * Antes toda cotización usaba el formulario de envío; ahora cada área pregunta lo suyo
+ * y cada producto puede sobrescribirlo (catálogo o panel de asesor).
+ */
+export const deptQuestions: Record<string, Question[]> = {
+  importaciones: [
+    q('link', 'Liga del producto (Amazon, eBay, tienda…)', 'texto', { required: true, placeholder: 'https://' }),
+    q('detalle', 'Modelo, color, talla o variante', 'texto', { required: true }),
+    q('piezas', 'Piezas', 'numero', { required: true, placeholder: '1' }),
+    q('direccion', 'Dirección de entrega en México', 'parrafo', { required: true }),
+    q('cp', 'Código postal', 'texto', { required: true }),
+    q('seguro', '¿Agregar seguro de envío?', 'opciones', { options: ['Sí', 'No'], required: true }),
+  ],
+  viajes: [
+    q('origen', 'Ciudad de origen', 'texto', { required: true }),
+    q('destino', 'Destino', 'texto', { required: true }),
+    q('salida', 'Fecha de salida', 'fecha', { required: true }),
+    q('regreso', 'Fecha de regreso', 'fecha'),
+    q('pasajeros', 'Número de pasajeros', 'numero', { required: true, placeholder: '2' }),
+    q('presupuesto', 'Presupuesto aproximado por persona', 'texto'),
+  ],
+  tramites: [
+    q('titular', 'Nombre completo del titular', 'texto', { required: true }),
+    q('curp', 'CURP o NSS', 'texto'),
+    q('estado', 'Estado y municipio del trámite', 'texto', { required: true }),
+    q('urgencia', '¿Qué tan urgente es?', 'opciones', { options: ['Normal', 'Urgente (24-48 h)'], required: true }),
+  ],
+  justificantes: [
+    q('paciente', 'Nombre del paciente', 'texto', { required: true }),
+    q('fechas', 'Fechas que debe cubrir el documento', 'texto', { required: true }),
+    q('motivo', 'Motivo o padecimiento', 'parrafo', { required: true }),
+    q('institucion', 'Institución que lo solicita', 'texto' ),
+  ],
+  conductores: [
+    q('vehiculo', 'Marca, modelo y año del vehículo', 'texto', { required: true }),
+    q('uso', 'Uso del vehículo', 'opciones', { options: ['Particular', 'Plataforma (Uber/DiDi)', 'Carga'], required: true }),
+    q('cobertura', 'Cobertura deseada', 'opciones', { options: ['Amplia', 'Limitada', 'Responsabilidad civil'] }),
+    q('cp', 'Código postal donde circula', 'texto', { required: true }),
+  ],
+  marketing: [
+    q('marca', 'Nombre de la marca o negocio', 'texto', { required: true }),
+    q('objetivo', '¿Qué necesitas lograr?', 'parrafo', { required: true }),
+    q('referencias', 'Referencias o estilo que te gusta', 'parrafo'),
+    q('entrega', 'Fecha de entrega deseada', 'fecha'),
+    q('presupuesto', 'Presupuesto aproximado', 'texto'),
+  ],
+  trabajo: [
+    q('puesto', 'Puesto o vacante objetivo', 'texto', { required: true }),
+    q('experiencia', 'Años de experiencia', 'numero'),
+    q('detalle', 'Datos que debemos incluir', 'parrafo', { required: true }),
+  ],
+}
+
+/** Preguntas genéricas para cualquier producto que no tenga preset ni propias. */
+export const genericQuestions: Question[] = [
+  q('detalle', '¿Qué necesitas exactamente?', 'parrafo', { required: true }),
+  q('fecha', '¿Para cuándo lo necesitas?', 'fecha'),
+  q('contacto', 'WhatsApp de contacto', 'texto', { required: true }),
+]
+
+/** Preguntas por defecto de un producto: propias → preset del departamento → genéricas. */
+export const defaultQuestions = (x: Product): Question[] =>
+  x.questions ?? deptQuestions[x.dept] ?? genericQuestions
 
 /**
  * Catálogo tomado del "Catálogo de descuentos" (pág. 9 del PDF).
@@ -54,9 +145,9 @@ const p = (
  */
 export const products: Product[] = [
   // ── Viajes ✈️
-  p('viajes', 'Vuelos', 1890, 'por trayecto', 2350, 'Nacionales e internacionales'),
-  p('viajes', 'Hoteles', 1150, 'por noche', 1490),
-  p('viajes', 'Cruceros', 9800, 'por persona', 12500),
+  p('viajes', 'Vuelos', 1890, 'por trayecto', 2350, 'Nacionales e internacionales', { quote: true }),
+  p('viajes', 'Hoteles', 1150, 'por noche', 1490, undefined, { quote: true }),
+  p('viajes', 'Cruceros', 9800, 'por persona', 12500, undefined, { quote: true }),
   p('viajes', 'Parques', 890, 'por boleto', 1150),
   p('viajes', 'Atracciones turísticas', 540, 'por boleto', 700),
 
@@ -69,8 +160,8 @@ export const products: Product[] = [
   p('diversion', 'Libros digitales', 39, 'por título', 69),
 
   // ── Importaciones 📦
-  p('importaciones', 'Celulares E.U.A', 4900, 'por equipo', undefined, 'Cotización previa por modelo'),
-  p('importaciones', 'Productos E.U.A', 350, 'por pedido', undefined, 'Se suma costo del artículo'),
+  p('importaciones', 'Celulares E.U.A', 4900, 'por equipo', undefined, 'Cotización previa por modelo', { quote: true }),
+  p('importaciones', 'Productos E.U.A', 350, 'por pedido', undefined, 'Se suma costo del artículo', { quote: true }),
 
   // ── Trámites 📄
   p('tramites', 'Afiliación al IMSS', 450, 'por trámite', 600),
@@ -114,7 +205,7 @@ export const products: Product[] = [
 
   // ── Conductores 🚗
   p('conductores', 'Recargas Bait', 50, 'por recarga', undefined, 'Paquetes desde $50'),
-  p('conductores', 'Seguro de autos', 3900, 'anual', 5400),
+  p('conductores', 'Seguro de autos', 3900, 'anual', 5400, undefined, { quote: true }),
   p('conductores', 'Deducible autos', 2500, 'por siniestro', undefined, 'Sujeto a póliza'),
 
   // ── Trabajo 💼
@@ -123,10 +214,10 @@ export const products: Product[] = [
 
   // ── Marketing & Diseño 🎨
   // El PDF lista el departamento pero no sus productos: propuesta inicial, editable.
-  p('marketing', 'Diseño de logotipo', 1290, 'por proyecto', 1900),
-  p('marketing', 'Manejo de redes sociales', 2900, 'mensual', 3900),
+  p('marketing', 'Diseño de logotipo', 1290, 'por proyecto', 1900, undefined, { quote: true }),
+  p('marketing', 'Manejo de redes sociales', 2900, 'mensual', 3900, undefined, { quote: true }),
   p('marketing', 'Flyers y banners', 390, 'por pieza', 550),
-  p('marketing', 'Landing page', 4900, 'por proyecto', 6900),
+  p('marketing', 'Landing page', 4900, 'por proyecto', 6900, undefined, { quote: true }),
 
   // ── Otros ✨
   p('otros', 'Telmex', 389, 'mensual', 499),
@@ -142,3 +233,7 @@ export const mxn = (n: number) =>
 
 export const discountPct = (x: Product) =>
   x.compareAt ? Math.round((1 - x.price / x.compareAt) * 100) : 0
+
+
+/** Precio que suma al carrito: los productos de cotización no cobran hasta que el asesor confirma. */
+export const chargeOf = (x: Product) => (x.quote ? 0 : x.price)

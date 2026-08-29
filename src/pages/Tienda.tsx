@@ -3,14 +3,25 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { departments, discountPct, mxn, products, type Product } from '../data/catalog'
 import { useStore } from '../lib/store'
 import { Empty, Reveal, useToast } from '../components/ui'
+import { QuestionsEditor, QuoteForm } from '../components/Cotizador'
 import { IconCart, IconCheck, IconSearch, IconStore } from '../components/Icons'
 
 export default function Tienda() {
   const [params, setParams] = useSearchParams()
   const dept = params.get('dept') ?? 'todos'
   const [q, setQ] = useState('')
-  const { addToCart, cart } = useStore()
+  const { addToCart, cart, user, questionsOf, setProductQuestions, resetProductQuestions } =
+    useStore()
   const { show, node } = useToast()
+  const [cotizando, setCotizando] = useState<Product | null>(null)
+  const [editando, setEditando] = useState<Product | null>(null)
+  const esAsesor = user?.role === 'asesor'
+
+  const onAdd = (p: Product) => {
+    if (p.quote) return setCotizando(p)
+    addToCart(p.id)
+    show(`${p.name} agregado al carrito`)
+  }
 
   const list = useMemo(() => {
     const term = q.trim().toLowerCase()
@@ -105,14 +116,55 @@ export default function Tienda() {
                   </h2>
                   <span className="text-xs text-ink-faint">{items.length} opciones</span>
                 </div>
-                <Grid items={items} onAdd={(p) => (addToCart(p.id), show(`${p.name} agregado al carrito`))} cart={cart} />
+                <Grid
+                  items={items}
+                  onAdd={onAdd}
+                  onEditQuestions={esAsesor ? setEditando : undefined}
+                  cart={cart}
+                />
               </section>
             )
           })
         ) : (
-          <Grid items={list} onAdd={(p) => (addToCart(p.id), show(`${p.name} agregado al carrito`))} cart={cart} />
+          <Grid
+            items={list}
+            onAdd={onAdd}
+            onEditQuestions={esAsesor ? setEditando : undefined}
+            cart={cart}
+          />
         )}
       </div>
+
+      {cotizando && (
+        <QuoteForm
+          product={cotizando}
+          questions={questionsOf(cotizando)}
+          onCancel={() => setCotizando(null)}
+          onSubmit={(answers) => {
+            addToCart(cotizando.id, 1, answers)
+            show(`Cotización de ${cotizando.name} agregada al carrito`)
+            setCotizando(null)
+          }}
+        />
+      )}
+
+      {editando && (
+        <QuestionsEditor
+          product={editando}
+          questions={questionsOf(editando)}
+          onCancel={() => setEditando(null)}
+          onSave={(qs) => {
+            setProductQuestions(editando.id, qs)
+            show(`Preguntas de ${editando.name} actualizadas`)
+            setEditando(null)
+          }}
+          onReset={() => {
+            resetProductQuestions(editando.id)
+            show(`Preguntas de ${editando.name} restauradas`)
+            setEditando(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -120,17 +172,24 @@ export default function Tienda() {
 function Grid({
   items,
   onAdd,
+  onEditQuestions,
   cart,
 }: {
   items: Product[]
   onAdd: (p: Product) => void
+  onEditQuestions?: (p: Product) => void
   cart: { productId: string; qty: number }[]
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((p, i) => (
         <Reveal key={p.id} delay={Math.min(i, 8) * 40}>
-          <Card product={p} onAdd={onAdd} inCart={cart.find((l) => l.productId === p.id)?.qty ?? 0} />
+          <Card
+            product={p}
+            onAdd={onAdd}
+            onEditQuestions={onEditQuestions}
+            inCart={cart.find((l) => l.productId === p.id)?.qty ?? 0}
+          />
         </Reveal>
       ))}
     </div>
@@ -140,10 +199,12 @@ function Grid({
 function Card({
   product,
   onAdd,
+  onEditQuestions,
   inCart,
 }: {
   product: Product
   onAdd: (p: Product) => void
+  onEditQuestions?: (p: Product) => void
   inCart: number
 }) {
   const off = discountPct(product)
@@ -154,7 +215,11 @@ function Card({
         <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cream text-xl ring-1 ring-line">
           {d?.emoji}
         </span>
-        {off > 0 && (
+        {product.quote ? (
+          <span className="rounded-full bg-gold/15 px-2.5 py-1 text-[0.7rem] font-bold text-[#7d4a02]">
+            Cotización
+          </span>
+        ) : off > 0 && (
           <span className="rounded-full bg-magenta/10 px-2.5 py-1 text-[0.7rem] font-bold text-magenta">
             -{off}%
           </span>
@@ -171,25 +236,42 @@ function Card({
 
       <div className="mt-auto flex items-end justify-between gap-3 pt-6">
         <span>
-          <span className="block font-display text-[1.35rem] leading-none font-semibold text-wine">
-            {mxn(product.price)}
-          </span>
-          {product.compareAt && (
-            <span className="mt-1 block text-xs text-ink-faint line-through">
-              {mxn(product.compareAt)}
-            </span>
+          {product.quote ? (
+            <>
+              <span className="block font-display text-[1.35rem] leading-none font-semibold text-wine">
+                A cotizar
+              </span>
+              <span className="mt-1 block text-xs text-ink-faint">
+                desde {mxn(product.price)} · {product.unit}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="block font-display text-[1.35rem] leading-none font-semibold text-wine">
+                {mxn(product.price)}
+              </span>
+              {product.compareAt && (
+                <span className="mt-1 block text-xs text-ink-faint line-through">
+                  {mxn(product.compareAt)}
+                </span>
+              )}
+            </>
           )}
         </span>
         <button
           type="button"
           onClick={() => onAdd(product)}
           className="group btn-primary !px-4 !py-2.5 !text-[0.8rem]"
-          aria-label={`Agregar ${product.name} al carrito`}
+          aria-label={
+            product.quote ? `Cotizar ${product.name}` : `Agregar ${product.name} al carrito`
+          }
         >
           {inCart > 0 ? (
             <>
               <IconCheck className="h-4 w-4" /> {inCart}
             </>
+          ) : product.quote ? (
+            'Cotizar'
           ) : (
             <>
               <IconCart className="h-4 w-4" /> Agregar
@@ -197,6 +279,16 @@ function Card({
           )}
         </button>
       </div>
+
+      {onEditQuestions && product.quote && (
+        <button
+          type="button"
+          onClick={() => onEditQuestions(product)}
+          className="mt-3 text-[0.75rem] font-semibold text-ink-soft hover:text-wine hover:underline"
+        >
+          Editar preguntas de cotización
+        </button>
+      )}
 
       {inCart > 0 && (
         <Link

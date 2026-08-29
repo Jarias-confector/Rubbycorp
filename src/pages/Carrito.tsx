@@ -1,19 +1,35 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { departments, mxn } from '../data/catalog'
+import { chargeOf, departments, mxn, type Product } from '../data/catalog'
 import { useStore } from '../lib/store'
 import { Empty, Reveal, useToast } from '../components/ui'
+import { QuoteForm } from '../components/Cotizador'
 import { IconArrow, IconCart, IconMinus, IconPlus, IconTrash, IconWallet } from '../components/Icons'
 
 export default function Carrito() {
-  const { cartItems, cartTotal, setQty, removeFromCart, clearCart, checkout, balance, user } =
-    useStore()
+  const {
+    cartItems,
+    cartTotal,
+    quoteCount,
+    setQty,
+    removeFromCart,
+    clearCart,
+    checkout,
+    balance,
+    user,
+    questionsOf,
+    setAnswers,
+  } = useStore()
   const { show, node } = useToast()
   const nav = useNavigate()
   const [done, setDone] = useState<string | null>(null)
+  const [editando, setEditando] = useState<Product | null>(null)
 
   const savings = cartItems.reduce(
-    (s, x) => s + ((x.product.compareAt ?? x.product.price) - x.product.price) * x.qty,
+    (s, x) =>
+      x.product.quote
+        ? s
+        : s + ((x.product.compareAt ?? x.product.price) - x.product.price) * x.qty,
     0,
   )
   const falta = Math.max(0, cartTotal - balance)
@@ -67,7 +83,7 @@ export default function Carrito() {
       ) : (
         <div className="mt-10 grid gap-4 lg:grid-cols-[1.55fr_1fr] lg:items-start">
           <ul className="space-y-3">
-            {cartItems.map(({ product, qty }, i) => (
+            {cartItems.map(({ product, qty, answers }, i) => (
               <Reveal key={product.id} delay={i * 40}>
                 <li className="card flex items-center gap-4 p-4 sm:p-5">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-cream text-xl ring-1 ring-line">
@@ -77,8 +93,25 @@ export default function Carrito() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold text-ink">{product.name}</p>
                     <p className="text-xs text-ink-faint">
-                      {mxn(product.price)} · {product.unit}
+                      {product.quote ? 'Por cotizar' : mxn(product.price)} · {product.unit}
                     </p>
+                    {product.quote && (
+                      <>
+                        <p className="mt-1 line-clamp-2 text-[0.72rem] text-ink-soft">
+                          {questionsOf(product)
+                            .filter((qq) => (answers[qq.id] ?? '').trim())
+                            .map((qq) => `${qq.label}: ${answers[qq.id]}`)
+                            .join(' · ') || 'Sin datos de cotización'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setEditando(product)}
+                          className="mt-1 text-[0.72rem] font-semibold text-magenta hover:underline"
+                        >
+                          Editar respuestas
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1 rounded-full bg-cream p-1 ring-1 ring-line">
@@ -102,7 +135,7 @@ export default function Carrito() {
                   </div>
 
                   <span className="hidden w-24 text-right font-display font-semibold text-wine tabular-nums sm:block">
-                    {mxn(product.price * qty)}
+                    {product.quote ? '—' : mxn(chargeOf(product) * qty)}
                   </span>
 
                   <button
@@ -138,11 +171,26 @@ export default function Carrito() {
                     <dd className="tabular-nums">-{mxn(savings)}</dd>
                   </div>
                 )}
+                {quoteCount > 0 && (
+                  <div className="flex justify-between text-ink-soft">
+                    <dt>Por cotizar</dt>
+                    <dd>
+                      {quoteCount} {quoteCount === 1 ? 'servicio' : 'servicios'}
+                    </dd>
+                  </div>
+                )}
                 <div className="flex justify-between border-t border-line pt-3 text-base font-semibold text-ink">
-                  <dt>Total</dt>
+                  <dt>Total a pagar hoy</dt>
                   <dd className="font-display text-xl text-wine tabular-nums">{mxn(cartTotal)}</dd>
                 </div>
               </dl>
+
+              {quoteCount > 0 && (
+                <p className="mt-4 rounded-2xl bg-gold/10 px-4 py-3 text-xs text-[#7d4a02]">
+                  Los servicios de cotización no se cobran ahora: un asesor revisa tus respuestas y
+                  te confirma el precio antes de cobrar.
+                </p>
+              )}
 
               <div className="mt-5 rounded-2xl bg-cream/70 p-4 ring-1 ring-line">
                 <p className="flex items-center justify-between text-sm">
@@ -177,7 +225,7 @@ export default function Carrito() {
                 }}
                 className="group btn-primary mt-5 w-full !pr-2 !pl-6"
               >
-                Pagar con monedero
+                {cartTotal > 0 ? 'Pagar con monedero' : 'Enviar solicitud de cotización'}
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5 group-hover:-translate-y-px">
                   <IconArrow className="h-3.5 w-3.5" />
                 </span>
@@ -189,6 +237,20 @@ export default function Carrito() {
             </aside>
           </Reveal>
         </div>
+      )}
+
+      {editando && (
+        <QuoteForm
+          product={editando}
+          questions={questionsOf(editando)}
+          initial={cartItems.find((x) => x.product.id === editando.id)?.answers ?? {}}
+          onCancel={() => setEditando(null)}
+          onSubmit={(answers) => {
+            setAnswers(editando.id, answers)
+            show('Datos de cotización actualizados')
+            setEditando(null)
+          }}
+        />
       )}
     </div>
   )
