@@ -5,6 +5,19 @@ export type Department = {
   tagline: string
 }
 
+export type QuestionType = 'texto' | 'parrafo' | 'numero' | 'fecha' | 'opciones'
+
+/** Pregunta que el cliente responde al pedir una cotización. */
+export type Question = {
+  id: string
+  label: string
+  type: QuestionType
+  required?: boolean
+  placeholder?: string
+  /** Solo para type: 'opciones'. */
+  options?: string[]
+}
+
 export type Product = {
   id: string
   name: string
@@ -13,6 +26,10 @@ export type Product = {
   compareAt?: number
   unit: string
   note?: string
+  /** true = no se vende con precio fijo: se pide cotización antes de pagar. */
+  quote?: boolean
+  /** Preguntas propias del producto. Si falta, se usa el preset del departamento. */
+  questions?: Question[]
 }
 
 /** Los 12 departamentos del brief (pág. 5 del PDF). */
@@ -38,6 +55,7 @@ const p = (
   unit: string,
   compareAt?: number,
   note?: string,
+  extra?: Pick<Product, 'quote' | 'questions'>,
 ): Product => ({
   id: `${dept}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
   name,
@@ -46,7 +64,80 @@ const p = (
   compareAt,
   unit,
   note,
+  ...extra,
 })
+
+const q = (
+  id: string,
+  label: string,
+  type: QuestionType = 'texto',
+  extra?: Omit<Question, 'id' | 'label' | 'type'>,
+): Question => ({ id, label, type, ...extra })
+
+/**
+ * Presets de preguntas por departamento.
+ * Antes toda cotización usaba el formulario de envío; ahora cada área pregunta lo suyo
+ * y cada producto puede sobrescribirlo (catálogo o panel de asesor).
+ */
+export const deptQuestions: Record<string, Question[]> = {
+  importaciones: [
+    q('link', 'Liga del producto (Amazon, eBay, tienda…)', 'texto', { required: true, placeholder: 'https://' }),
+    q('detalle', 'Modelo, color, talla o variante', 'texto', { required: true }),
+    q('piezas', 'Piezas', 'numero', { required: true, placeholder: '1' }),
+    q('direccion', 'Dirección de entrega en México', 'parrafo', { required: true }),
+    q('cp', 'Código postal', 'texto', { required: true }),
+    q('seguro', '¿Agregar seguro de envío?', 'opciones', { options: ['Sí', 'No'], required: true }),
+  ],
+  viajes: [
+    q('origen', 'Ciudad de origen', 'texto', { required: true }),
+    q('destino', 'Destino', 'texto', { required: true }),
+    q('salida', 'Fecha de salida', 'fecha', { required: true }),
+    q('regreso', 'Fecha de regreso', 'fecha'),
+    q('pasajeros', 'Número de pasajeros', 'numero', { required: true, placeholder: '2' }),
+    q('presupuesto', 'Presupuesto aproximado por persona', 'texto'),
+  ],
+  tramites: [
+    q('titular', 'Nombre completo del titular', 'texto', { required: true }),
+    q('curp', 'CURP o NSS', 'texto'),
+    q('estado', 'Estado y municipio del trámite', 'texto', { required: true }),
+    q('urgencia', '¿Qué tan urgente es?', 'opciones', { options: ['Normal', 'Urgente (24-48 h)'], required: true }),
+  ],
+  justificantes: [
+    q('paciente', 'Nombre del paciente', 'texto', { required: true }),
+    q('fechas', 'Fechas que debe cubrir el documento', 'texto', { required: true }),
+    q('motivo', 'Motivo o padecimiento', 'parrafo', { required: true }),
+    q('institucion', 'Institución que lo solicita', 'texto' ),
+  ],
+  conductores: [
+    q('vehiculo', 'Marca, modelo y año del vehículo', 'texto', { required: true }),
+    q('uso', 'Uso del vehículo', 'opciones', { options: ['Particular', 'Plataforma (Uber/DiDi)', 'Carga'], required: true }),
+    q('cobertura', 'Cobertura deseada', 'opciones', { options: ['Amplia', 'Limitada', 'Responsabilidad civil'] }),
+    q('cp', 'Código postal donde circula', 'texto', { required: true }),
+  ],
+  marketing: [
+    q('marca', 'Nombre de la marca o negocio', 'texto', { required: true }),
+    q('objetivo', '¿Qué necesitas lograr?', 'parrafo', { required: true }),
+    q('referencias', 'Referencias o estilo que te gusta', 'parrafo'),
+    q('entrega', 'Fecha de entrega deseada', 'fecha'),
+    q('presupuesto', 'Presupuesto aproximado', 'texto'),
+  ],
+  trabajo: [
+    q('puesto', 'Puesto o vacante objetivo', 'texto', { required: true }),
+    q('experiencia', 'Años de experiencia', 'numero'),
+    q('detalle', 'Datos que debemos incluir', 'parrafo', { required: true }),
+  ],
+}
+
+/** Preguntas genéricas para cualquier producto que no tenga preset ni propias. */
+export const genericQuestions: Question[] = [
+  q('detalle', '¿Qué necesitas exactamente?', 'parrafo', { required: true }),
+  q('fecha', '¿Para cuándo lo necesitas?', 'fecha'),
+  q('contacto', 'WhatsApp de contacto', 'texto', { required: true }),
+]
+
+/** Preguntas por defecto de un producto: propias → preset del departamento → genéricas. */
+export const defaultQuestions = (x: Product): Question[] =>
+  x.questions ?? deptQuestions[x.dept] ?? genericQuestions
 
 /**
  * Catálogo tomado del "Catálogo de descuentos" (pág. 9 del PDF).
@@ -54,9 +145,59 @@ const p = (
  */
 export const products: Product[] = [
   // ── Viajes ✈️
-  p('viajes', 'Vuelos', 1890, 'por trayecto', 2350, 'Nacionales e internacionales'),
-  p('viajes', 'Hoteles', 1150, 'por noche', 1490),
-  p('viajes', 'Cruceros', 9800, 'por persona', 12500),
+  p('viajes', 'Vuelos', 1890, 'por trayecto', 2350, 'Nacionales e internacionales', {
+    quote: true,
+    questions: [
+      q('origen', 'Ciudad o aeropuerto de origen', 'texto', { required: true }),
+      q('destino', 'Ciudad o aeropuerto de destino', 'texto', { required: true }),
+      q('viaje', 'Tipo de viaje', 'opciones', {
+        options: ['Sencillo', 'Redondo', 'Multidestino'],
+        required: true,
+      }),
+      q('salida', 'Fecha de salida', 'fecha', { required: true }),
+      q('regreso', 'Fecha de regreso (si es redondo)', 'fecha'),
+      q('adultos', 'Adultos', 'numero', { required: true, placeholder: '1' }),
+      q('menores', 'Menores', 'numero', { placeholder: '0' }),
+      q('clase', 'Clase', 'opciones', { options: ['Turista', 'Premium', 'Ejecutiva'] }),
+      q('equipaje', 'Equipaje documentado', 'opciones', {
+        options: ['Solo equipaje de mano', '1 maleta', '2 o más maletas'],
+      }),
+      q('flexible', '¿Tus fechas son flexibles?', 'opciones', { options: ['Sí, ±3 días', 'No'] }),
+    ],
+  }),
+  p('viajes', 'Hoteles', 1150, 'por noche', 1490, undefined, {
+    quote: true,
+    questions: [
+      q('destino', 'Ciudad y zona donde quieres hospedarte', 'texto', { required: true }),
+      q('entrada', 'Fecha de entrada', 'fecha', { required: true }),
+      q('salida', 'Fecha de salida', 'fecha', { required: true }),
+      q('adultos', 'Adultos', 'numero', { required: true, placeholder: '2' }),
+      q('menores', 'Menores y sus edades', 'texto'),
+      q('habitaciones', 'Habitaciones', 'numero', { required: true, placeholder: '1' }),
+      q('categoria', 'Categoría', 'opciones', { options: ['3 estrellas', '4 estrellas', '5 estrellas', 'Boutique'] }),
+      q('plan', 'Plan', 'opciones', {
+        options: ['Solo hospedaje', 'Con desayuno', 'Todo incluido'],
+        required: true,
+      }),
+      q('hotel', '¿Algún hotel en particular?', 'texto'),
+    ],
+  }),
+  p('viajes', 'Cruceros', 9800, 'por persona', 12500, undefined, {
+    quote: true,
+    questions: [
+      q('puerto', 'Puerto de salida preferido', 'texto', { required: true }),
+      q('itinerario', 'Destino o itinerario que te interesa', 'texto', { required: true }),
+      q('naviera', 'Naviera preferida', 'texto'),
+      q('salida', 'Fecha aproximada de salida', 'fecha', { required: true }),
+      q('noches', 'Noches de crucero', 'numero', { placeholder: '7' }),
+      q('pasajeros', 'Pasajeros (adultos y menores)', 'texto', { required: true }),
+      q('camarote', 'Tipo de camarote', 'opciones', {
+        options: ['Interior', 'Vista al mar', 'Balcón', 'Suite'],
+        required: true,
+      }),
+      q('vuelo', '¿Necesitas vuelo al puerto?', 'opciones', { options: ['Sí', 'No'] }),
+    ],
+  }),
   p('viajes', 'Parques', 890, 'por boleto', 1150),
   p('viajes', 'Atracciones turísticas', 540, 'por boleto', 700),
 
@@ -69,8 +210,44 @@ export const products: Product[] = [
   p('diversion', 'Libros digitales', 39, 'por título', 69),
 
   // ── Importaciones 📦
-  p('importaciones', 'Celulares E.U.A', 4900, 'por equipo', undefined, 'Cotización previa por modelo'),
-  p('importaciones', 'Productos E.U.A', 350, 'por pedido', undefined, 'Se suma costo del artículo'),
+  p('importaciones', 'Celulares E.U.A', 4900, 'por equipo', undefined, 'Cotización previa por modelo', {
+    quote: true,
+    questions: [
+      q('modelo', 'Marca y modelo exacto', 'texto', { required: true, placeholder: 'iPhone 16 Pro' }),
+      q('almacenamiento', 'Almacenamiento', 'opciones', {
+        options: ['128 GB', '256 GB', '512 GB', '1 TB'],
+        required: true,
+      }),
+      q('color', 'Color', 'texto'),
+      q('condicion', 'Condición', 'opciones', {
+        options: ['Nuevo sellado', 'Reacondicionado'],
+        required: true,
+      }),
+      q('liberado', '¿Liberado para cualquier compañía?', 'opciones', {
+        options: ['Sí', 'No importa'],
+        required: true,
+      }),
+      q('piezas', 'Piezas', 'numero', { required: true, placeholder: '1' }),
+      q('liga', 'Liga de referencia (si tienes una)', 'texto', { placeholder: 'https://' }),
+      q('entrega', 'Ciudad y código postal de entrega', 'texto', { required: true }),
+    ],
+  }),
+  p('importaciones', 'Productos E.U.A', 350, 'por pedido', undefined, 'Se suma costo del artículo', {
+    quote: true,
+    questions: [
+      q('liga', 'Liga del producto (Amazon, eBay, tienda…)', 'texto', {
+        required: true,
+        placeholder: 'https://',
+      }),
+      q('detalle', 'Modelo, color, talla o variante', 'texto', { required: true }),
+      q('piezas', 'Piezas', 'numero', { required: true, placeholder: '1' }),
+      q('precio', 'Precio publicado en USD', 'texto', { placeholder: '89.99' }),
+      q('peso', 'Peso o tamaño aproximado', 'texto'),
+      q('direccion', 'Dirección de entrega en México', 'parrafo', { required: true }),
+      q('cp', 'Código postal', 'texto', { required: true }),
+      q('seguro', '¿Agregar seguro de envío?', 'opciones', { options: ['Sí', 'No'], required: true }),
+    ],
+  }),
 
   // ── Trámites 📄
   p('tramites', 'Afiliación al IMSS', 450, 'por trámite', 600),
@@ -114,7 +291,29 @@ export const products: Product[] = [
 
   // ── Conductores 🚗
   p('conductores', 'Recargas Bait', 50, 'por recarga', undefined, 'Paquetes desde $50'),
-  p('conductores', 'Seguro de autos', 3900, 'anual', 5400),
+  p('conductores', 'Seguro de autos', 3900, 'anual', 5400, undefined, {
+    quote: true,
+    questions: [
+      q('vehiculo', 'Marca, modelo, versión y año', 'texto', { required: true }),
+      q('uso', 'Uso del vehículo', 'opciones', {
+        options: ['Particular', 'Plataforma (Uber/DiDi)', 'Carga o reparto'],
+        required: true,
+      }),
+      q('cobertura', 'Cobertura deseada', 'opciones', {
+        options: ['Amplia', 'Limitada', 'Responsabilidad civil'],
+        required: true,
+      }),
+      q('cp', 'Código postal donde circula', 'texto', { required: true }),
+      q('edad', 'Edad del conductor principal', 'numero', { required: true }),
+      q('siniestros', 'Siniestros en los últimos 12 meses', 'opciones', {
+        options: ['Ninguno', '1', '2 o más'],
+      }),
+      q('aseguradora', 'Aseguradora actual y fecha de vencimiento', 'texto'),
+      q('forma', 'Forma de pago preferida', 'opciones', {
+        options: ['Anual', 'Semestral', 'Mensual'],
+      }),
+    ],
+  }),
   p('conductores', 'Deducible autos', 2500, 'por siniestro', undefined, 'Sujeto a póliza'),
 
   // ── Trabajo 💼
@@ -123,10 +322,69 @@ export const products: Product[] = [
 
   // ── Marketing & Diseño 🎨
   // El PDF lista el departamento pero no sus productos: propuesta inicial, editable.
-  p('marketing', 'Diseño de logotipo', 1290, 'por proyecto', 1900),
-  p('marketing', 'Manejo de redes sociales', 2900, 'mensual', 3900),
+  p('marketing', 'Diseño de logotipo', 1290, 'por proyecto', 1900, undefined, {
+    quote: true,
+    questions: [
+      q('marca', 'Nombre exacto de la marca', 'texto', { required: true }),
+      q('giro', 'Giro del negocio', 'texto', { required: true }),
+      q('estilo', 'Estilo que buscas', 'opciones', {
+        options: ['Minimalista', 'Clásico', 'Divertido', 'Elegante', 'Aún no lo sé'],
+        required: true,
+      }),
+      q('colores', 'Colores que quieres o que debemos evitar', 'texto'),
+      q('referencias', 'Logotipos que te gustan (ligas o descripción)', 'parrafo'),
+      q('entregables', 'Entregables', 'opciones', {
+        options: ['Solo logotipo', 'Logotipo + versiones', 'Logotipo + manual de marca'],
+        required: true,
+      }),
+      q('entrega', 'Fecha de entrega deseada', 'fecha'),
+    ],
+  }),
+  p('marketing', 'Manejo de redes sociales', 2900, 'mensual', 3900, undefined, {
+    quote: true,
+    questions: [
+      q('marca', 'Nombre de la marca o negocio', 'texto', { required: true }),
+      q('redes', '¿Qué redes quieres manejar?', 'texto', {
+        required: true,
+        placeholder: 'Facebook, Instagram, TikTok…',
+      }),
+      q('publicaciones', 'Publicaciones por semana', 'numero', { required: true, placeholder: '3' }),
+      q('contenido', '¿Quién produce el contenido?', 'opciones', {
+        options: ['Nosotros lo producimos', 'Yo envío fotos y videos', 'Mixto'],
+        required: true,
+      }),
+      q('objetivo', 'Objetivo principal', 'opciones', {
+        options: ['Más seguidores', 'Ventas', 'Posicionamiento', 'Atención a clientes'],
+        required: true,
+      }),
+      q('pauta', 'Presupuesto mensual para pauta publicitaria', 'texto'),
+      q('inicio', 'Fecha de inicio', 'fecha'),
+    ],
+  }),
   p('marketing', 'Flyers y banners', 390, 'por pieza', 550),
-  p('marketing', 'Landing page', 4900, 'por proyecto', 6900),
+  p('marketing', 'Landing page', 4900, 'por proyecto', 6900, undefined, {
+    quote: true,
+    questions: [
+      q('negocio', 'Negocio o producto a promocionar', 'texto', { required: true }),
+      q('objetivo', 'Objetivo de la página', 'opciones', {
+        options: ['Captar prospectos', 'Vender en línea', 'Agendar citas', 'Solo informativa'],
+        required: true,
+      }),
+      q('secciones', 'Secciones que debe llevar', 'parrafo', { required: true }),
+      q('dominio', '¿Ya tienes dominio y hosting?', 'opciones', {
+        options: ['Sí', 'No, lo necesito'],
+        required: true,
+      }),
+      q('contenido', '¿Tienes textos e imágenes listos?', 'opciones', {
+        options: ['Sí', 'Parcialmente', 'No, los necesito'],
+        required: true,
+      }),
+      q('integraciones', 'Integraciones necesarias', 'texto', {
+        placeholder: 'WhatsApp, pagos, formularios, analytics…',
+      }),
+      q('entrega', 'Fecha de entrega deseada', 'fecha'),
+    ],
+  }),
 
   // ── Otros ✨
   p('otros', 'Telmex', 389, 'mensual', 499),
@@ -142,3 +400,7 @@ export const mxn = (n: number) =>
 
 export const discountPct = (x: Product) =>
   x.compareAt ? Math.round((1 - x.price / x.compareAt) * 100) : 0
+
+
+/** Precio que suma al carrito: los productos de cotización no cobran hasta que el asesor confirma. */
+export const chargeOf = (x: Product) => (x.quote ? 0 : x.price)

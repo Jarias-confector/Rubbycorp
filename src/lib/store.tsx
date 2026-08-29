@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { products, type Product } from '../data/catalog'
+import { chargeOf, defaultQuestions, products, type Product, type Question } from '../data/catalog'
 
 export type User = {
   firstName: string
@@ -19,7 +19,10 @@ export type User = {
   role: 'cliente' | 'asesor'
 }
 
-export type CartLine = { productId: string; qty: number }
+/** Respuestas del cliente a las preguntas de cotización, por id de pregunta. */
+export type Answers = Record<string, string>
+
+export type CartLine = { productId: string; qty: number; answers?: Answers }
 
 export type Movement = {
   id: string
@@ -34,7 +37,7 @@ export type Order = {
   date: string
   total: number
   status: 'En proceso' | 'Completado' | 'Cancelado'
-  items: { name: string; qty: number; price: number }[]
+  items: { name: string; qty: number; price: number; quote?: boolean; answers?: Answers }[]
 }
 
 export type TicketStatus = 'Pendiente' | 'En revisión' | 'Solucionado'
@@ -58,6 +61,8 @@ type State = {
   movements: Movement[]
   orders: Order[]
   tickets: Ticket[]
+  /** Preguntas personalizadas por producto (panel de asesor). */
+  questionOverrides: Record<string, Question[]>
 }
 
 const KEY = 'rubbycorp.v1'
@@ -80,6 +85,7 @@ const initial: State = {
   movements: [],
   orders: [],
   tickets: [],
+  questionOverrides: {},
 }
 
 function load(): State {
@@ -97,7 +103,8 @@ const now = () => new Date().toISOString()
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
 type Ctx = State & {
-  cartItems: { product: Product; qty: number }[]
+  cartItems: { product: Product; qty: number; answers: Answers }[]
+  quoteCount: number
   cartCount: number
   cartTotal: number
   openTickets: number
@@ -105,7 +112,11 @@ type Ctx = State & {
   register: (u: Omit<User, 'role'>) => { ok: boolean; error?: string }
   logout: () => void
   updateProfile: (patch: Partial<User>) => void
-  addToCart: (productId: string, qty?: number) => void
+  addToCart: (productId: string, qty?: number, answers?: Answers) => void
+  setAnswers: (productId: string, answers: Answers) => void
+  questionsOf: (product: Product) => Question[]
+  setProductQuestions: (productId: string, questions: Question[]) => void
+  resetProductQuestions: (productId: string) => void
   setQty: (productId: string, qty: number) => void
   removeFromCart: (productId: string) => void
   clearCart: () => void
@@ -176,15 +187,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const addToCart: Ctx['addToCart'] = useCallback((productId, qty = 1) => {
+  const addToCart: Ctx['addToCart'] = useCallback((productId, qty = 1, answers) => {
     setState((s) => {
       const line = s.cart.find((l) => l.productId === productId)
       return {
         ...s,
         cart: line
-          ? s.cart.map((l) => (l.productId === productId ? { ...l, qty: l.qty + qty } : l))
-          : [...s.cart, { productId, qty }],
+          ? s.cart.map((l) =>
+              l.productId === productId
+                ? { ...l, qty: l.qty + qty, answers: answers ?? l.answers }
+                : l,
+            )
+          : [...s.cart, { productId, qty, answers }],
       }
+    })
+  }, [])
+
+  const setAnswers: Ctx['setAnswers'] = useCallback((productId, answers) => {
+    setState((s) => ({
+      ...s,
+      cart: s.cart.map((l) => (l.productId === productId ? { ...l, answers } : l)),
+    }))
+  }, [])
+
+  const setProductQuestions: Ctx['setProductQuestions'] = useCallback((productId, questions) => {
+    setState((s) => ({
+      ...s,
+      questionOverrides: { ...s.questionOverrides, [productId]: questions },
+    }))
+  }, [])
+
+  const resetProductQuestions: Ctx['resetProductQuestions'] = useCallback((productId) => {
+    setState((s) => {
+      const next = { ...s.questionOverrides }
+      delete next[productId]
+      return { ...s, questionOverrides: next }
     })
   }, [])
 
@@ -215,14 +252,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const cartItems = useMemo(
     () =>
       state.cart
-        .map((l) => ({ product: products.find((p) => p.id === l.productId)!, qty: l.qty }))
+        .map((l) => ({
+          product: products.find((p) => p.id === l.productId)!,
+          qty: l.qty,
+          answers: l.answers ?? {},
+        }))
         .filter((x) => Boolean(x.product)),
     [state.cart],
   )
 
+  /** Los productos de cotización no suman: el asesor confirma el precio después. */
   const cartTotal = useMemo(
-    () => cartItems.reduce((sum, x) => sum + x.product.price * x.qty, 0),
+    () => cartItems.reduce((sum, x) => sum + chargeOf(x.product) * x.qty, 0),
     [cartItems],
+  )
+
+  const quoteCount = useMemo(
+    () => cartItems.filter((x) => x.product.quote).length,
+    [cartItems],
+  )
+
+  const questionsOf: Ctx['questionsOf'] = useCallback(
+    (product) => state.questionOverrides[product.id] ?? defaultQuestions(product),
+    [state.questionOverrides],
   )
 
   const cartCount = useMemo(() => cartItems.reduce((n, x) => n + x.qty, 0), [cartItems])
@@ -238,6 +290,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (state.balance < cartTotal)
       return { ok: false, error: 'Saldo insuficiente en tu monedero. Recarga para continuar.' }
 
+    const faltan = cartItems.filter(
+      (x) =>
+        x.product.quote &&
+        questionsOf(x.product).some((qq) => qq.required && !(x.answers[qq.id] ?? '').trim()),
+    )
+    if (faltan.length > 0)
+      return {
+        ok: false,
+        error: `Completa los datos de cotización de ${faltan[0].product.name}.`,
+      }
+
     const orderId = uid('ped').toUpperCase()
     setState((s) => ({
       ...s,
@@ -249,23 +312,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           date: now(),
           total: cartTotal,
           status: 'En proceso',
-          items: cartItems.map((x) => ({ name: x.product.name, qty: x.qty, price: x.product.price })),
+          items: cartItems.map((x) => ({
+            name: x.product.name,
+            qty: x.qty,
+            price: chargeOf(x.product),
+            quote: x.product.quote,
+            answers: x.product.quote ? x.answers : undefined,
+          })),
         },
         ...s.orders,
       ],
-      movements: [
-        {
-          id: uid('mov'),
-          date: now(),
-          concept: `Pago de pedido ${orderId}`,
-          amount: -cartTotal,
-          kind: 'compra',
-        },
-        ...s.movements,
-      ],
+      movements:
+        cartTotal > 0
+          ? [
+              {
+                id: uid('mov'),
+                date: now(),
+                concept: `Pago de pedido ${orderId}`,
+                amount: -cartTotal,
+                kind: 'compra',
+              },
+              ...s.movements,
+            ]
+          : s.movements,
     }))
     return { ok: true, orderId }
-  }, [state.user, state.balance, cartItems, cartTotal])
+  }, [state.user, state.balance, cartItems, cartTotal, questionsOf])
 
   const createTicket: Ctx['createTicket'] = useCallback((t) => {
     const id = uid('tk').toUpperCase()
@@ -307,12 +379,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cartItems,
     cartCount,
     cartTotal,
+    quoteCount,
     openTickets,
     login,
     register,
     logout,
     updateProfile,
     addToCart,
+    setAnswers,
+    questionsOf,
+    setProductQuestions,
+    resetProductQuestions,
     setQty,
     removeFromCart,
     clearCart,

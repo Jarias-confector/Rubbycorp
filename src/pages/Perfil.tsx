@@ -216,11 +216,22 @@ export default function Perfil() {
                     </p>
                     <ul className="mt-3 space-y-1 text-sm text-ink-soft">
                       {o.items.map((it, i) => (
-                        <li key={i} className="flex justify-between gap-3">
-                          <span className="truncate">
-                            {it.qty} × {it.name}
-                          </span>
-                          <span className="shrink-0 tabular-nums">{mxn(it.price * it.qty)}</span>
+                        <li key={i}>
+                          <div className="flex justify-between gap-3">
+                            <span className="truncate">
+                              {it.qty} × {it.name}
+                            </span>
+                            <span className="shrink-0 tabular-nums">
+                              {it.quote ? 'Por cotizar' : mxn(it.price * it.qty)}
+                            </span>
+                          </div>
+                          {it.quote && it.answers && (
+                            <p className="mt-0.5 text-[0.72rem] text-ink-faint">
+                              {Object.values(it.answers)
+                                .filter((v) => v.trim())
+                                .join(' · ')}
+                            </p>
+                          )}
                         </li>
                       ))}
                     </ul>
