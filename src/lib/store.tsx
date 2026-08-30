@@ -8,6 +8,13 @@ import {
   type ReactNode,
 } from 'react'
 import { chargeOf, defaultQuestions, products, type Product, type Question } from '../data/catalog'
+import {
+  auditCost,
+  DEFAULT_MARGIN_TARGET,
+  seedProviderCosts,
+  type CostAudit,
+  type ProviderCost,
+} from '../data/providerCosts'
 
 export type User = {
   firstName: string
@@ -37,7 +44,15 @@ export type Order = {
   date: string
   total: number
   status: 'En proceso' | 'Completado' | 'Cancelado'
-  items: { name: string; qty: number; price: number; quote?: boolean; answers?: Answers }[]
+  items: {
+    /** Ausente en pedidos creados antes del panel de ventas: su costo no se puede rastrear. */
+    productId?: string
+    name: string
+    qty: number
+    price: number
+    quote?: boolean
+    answers?: Answers
+  }[]
 }
 
 export type TicketStatus = 'Pendiente' | 'En revisión' | 'Solucionado'
@@ -63,6 +78,10 @@ type State = {
   tickets: Ticket[]
   /** Preguntas personalizadas por producto (panel de asesor). */
   questionOverrides: Record<string, Question[]>
+  /** Costo del proveedor por producto, indexado por id de producto. */
+  providerCosts: Record<string, ProviderCost>
+  /** Margen mínimo aceptable sobre el precio de venta (0 a 1). */
+  marginTarget: number
 }
 
 const KEY = 'rubbycorp.v1'
@@ -86,6 +105,8 @@ const initial: State = {
   orders: [],
   tickets: [],
   questionOverrides: {},
+  providerCosts: Object.fromEntries(seedProviderCosts.map((c) => [c.productId, c])),
+  marginTarget: DEFAULT_MARGIN_TARGET,
 }
 
 function load(): State {
@@ -101,6 +122,20 @@ function load(): State {
 
 const now = () => new Date().toISOString()
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+
+/** Resultado de ventas medido contra los costos de proveedor conocidos. */
+export type SalesSummary = {
+  pedidos: number
+  /** Sólo pedidos no cancelados. */
+  ingresos: number
+  /** Costo de proveedor de las partidas con costo registrado. */
+  costo: number
+  utilidad: number
+  /** utilidad / ingresos con costo conocido, entre 0 y 1. */
+  margen: number
+  /** Partidas vendidas sin costo de proveedor: quedan fuera del cálculo. */
+  partidasSinCosto: number
+}
 
 type Ctx = State & {
   cartItems: { product: Product; qty: number; answers: Answers }[]
@@ -124,6 +159,16 @@ type Ctx = State & {
   addFunds: (amount: number, concept: string, kind?: Movement['kind']) => void
   createTicket: (t: { product: string; subject: string; description: string; images: string[] }) => string
   setTicketStatus: (id: string, status: TicketStatus) => void
+  /** Auditoría precio de venta vs. costo del proveedor, para todo el catálogo. */
+  audits: CostAudit[]
+  costOf: (productId: string) => ProviderCost | undefined
+  setProviderCost: (cost: Omit<ProviderCost, 'updatedAt'>) => void
+  removeProviderCost: (productId: string) => void
+  /** Reemplaza los costos recibidos y devuelve cuántos se guardaron. */
+  importProviderCosts: (costs: ProviderCost[]) => number
+  setMarginTarget: (target: number) => void
+  setOrderStatus: (id: string, status: Order['status']) => void
+  sales: SalesSummary
   replyTicket: (id: string, text: string) => void
   reset: () => void
 }
@@ -313,6 +358,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           total: cartTotal,
           status: 'En proceso',
           items: cartItems.map((x) => ({
+            productId: x.product.id,
             name: x.product.name,
             qty: x.qty,
             price: chargeOf(x.product),
@@ -369,6 +415,88 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const setProviderCost: Ctx['setProviderCost'] = useCallback((cost) => {
+    setState((s) => ({
+      ...s,
+      providerCosts: {
+        ...s.providerCosts,
+        [cost.productId]: { ...cost, updatedAt: now() },
+      },
+    }))
+  }, [])
+
+  const removeProviderCost: Ctx['removeProviderCost'] = useCallback((productId) => {
+    setState((s) => {
+      const next = { ...s.providerCosts }
+      delete next[productId]
+      return { ...s, providerCosts: next }
+    })
+  }, [])
+
+  const importProviderCosts: Ctx['importProviderCosts'] = useCallback((costs) => {
+    if (costs.length === 0) return 0
+    setState((s) => ({
+      ...s,
+      providerCosts: {
+        ...s.providerCosts,
+        ...Object.fromEntries(costs.map((c) => [c.productId, c])),
+      },
+    }))
+    return costs.length
+  }, [])
+
+  const setMarginTarget: Ctx['setMarginTarget'] = useCallback((target) => {
+    const clamped = Math.min(0.95, Math.max(0, Number.isFinite(target) ? target : 0))
+    setState((s) => ({ ...s, marginTarget: clamped }))
+  }, [])
+
+  const setOrderStatus: Ctx['setOrderStatus'] = useCallback((id, status) => {
+    setState((s) => ({
+      ...s,
+      orders: s.orders.map((o) => (o.id === id ? { ...o, status } : o)),
+    }))
+  }, [])
+
+  const costOf: Ctx['costOf'] = useCallback(
+    (productId) => state.providerCosts[productId],
+    [state.providerCosts],
+  )
+
+  const audits = useMemo(
+    () => products.map((x) => auditCost(x, state.providerCosts[x.id], state.marginTarget)),
+    [state.providerCosts, state.marginTarget],
+  )
+
+  const sales = useMemo<SalesSummary>(() => {
+    const vivos = state.orders.filter((o) => o.status !== 'Cancelado')
+    let costo = 0
+    let ingresosConCosto = 0
+    let partidasSinCosto = 0
+
+    for (const order of vivos) {
+      for (const item of order.items) {
+        const c = item.productId ? state.providerCosts[item.productId] : undefined
+        if (!c || !Number.isFinite(c.cost) || c.cost < 0) {
+          partidasSinCosto += 1
+          continue
+        }
+        costo += c.cost * item.qty
+        ingresosConCosto += item.price * item.qty
+      }
+    }
+
+    const ingresos = vivos.reduce((sum, o) => sum + o.total, 0)
+    const utilidad = ingresosConCosto - costo
+    return {
+      pedidos: vivos.length,
+      ingresos,
+      costo,
+      utilidad,
+      margen: ingresosConCosto > 0 ? utilidad / ingresosConCosto : 0,
+      partidasSinCosto,
+    }
+  }, [state.orders, state.providerCosts])
+
   const reset = useCallback(() => {
     localStorage.removeItem(KEY)
     setState(initial)
@@ -398,6 +526,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createTicket,
     setTicketStatus,
     replyTicket,
+    audits,
+    costOf,
+    setProviderCost,
+    removeProviderCost,
+    importProviderCosts,
+    setMarginTarget,
+    setOrderStatus,
+    sales,
     reset,
   }
 

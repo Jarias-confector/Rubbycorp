@@ -4,6 +4,7 @@ import { useStore } from '../lib/store'
 import { company, waLink } from '../data/company'
 import {
   IconCart,
+  IconChart,
   IconClose,
   IconGem,
   IconLife,
@@ -15,13 +16,16 @@ import {
   IconWhatsApp,
 } from './Icons'
 
-const nav = [
+const baseNav = [
   { to: '/tienda', label: 'Tienda', icon: IconStore },
   { to: '/catalogo', label: 'Catálogo', icon: IconTag },
   { to: '/monedero', label: 'Monedero', icon: IconWallet },
   { to: '/soporte', label: 'Soporte', icon: IconLife },
   { to: '/perfil', label: 'Mi perfil', icon: IconUser },
 ]
+
+/** El panel de ventas expone costos y utilidades: sólo se ofrece al asesor. */
+const ventasLink = { to: '/ventas', label: 'Ventas', icon: IconChart }
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -42,6 +46,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
 
 export default function Layout() {
   const { cartCount, user, openTickets } = useStore()
+  const nav = user?.role === 'asesor' ? [...baseNav, ventasLink] : baseNav
   const [open, setOpen] = useState(false)
   const { pathname } = useLocation()
 
@@ -224,7 +229,7 @@ function Footer() {
             Secciones
           </h3>
           <ul className="mt-5 space-y-2.5 text-sm">
-            {nav.map((n) => (
+            {baseNav.map((n) => (
               <li key={n.to}>
                 <Link to={n.to} className="text-cream/70 transition-colors hover:text-cream">
                   {n.label}

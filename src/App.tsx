@@ -7,6 +7,7 @@ import Carrito from './pages/Carrito'
 import Catalogo from './pages/Catalogo'
 import Monedero from './pages/Monedero'
 import Soporte from './pages/Soporte'
+import Ventas from './pages/Ventas'
 import Perfil from './pages/Perfil'
 import Acceder from './pages/Acceder'
 import NoEncontrado from './pages/NoEncontrado'
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="catalogo" element={<Catalogo />} />
           <Route path="monedero" element={<Monedero />} />
           <Route path="soporte" element={<Soporte />} />
+          <Route path="ventas" element={<Ventas />} />
           <Route path="perfil" element={<Perfil />} />
           <Route path="acceder" element={<Acceder />} />
           <Route path="*" element={<NoEncontrado />} />

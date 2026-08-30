@@ -158,3 +158,9 @@ export const IconDoc = ({ className, strokeWidth }: P) => (
     <path d="M13 3.5v5h5M8.5 13h7M8.5 16.5h4.5" />
   </svg>
 )
+
+export const IconChart = ({ className, strokeWidth }: P) => (
+  <svg {...base(className, strokeWidth)}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </svg>
+)

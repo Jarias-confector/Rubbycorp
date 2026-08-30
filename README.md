@@ -31,8 +31,9 @@ Requiere Node 20 o superior.
 | Contraseña | `rubby2017` |
 | Rol | `asesor` |
 
-El rol `asesor` habilita dos paneles que el brief pide explícitamente: abonar saldo manualmente al
-monedero y cambiar el estado de los tickets de soporte. Las cuentas nuevas se registran como
+El rol `asesor` habilita los paneles de administración: abonar saldo manualmente al monedero,
+cambiar el estado de los tickets de soporte y el panel de ventas con la auditoría de costos de
+proveedor. Las cuentas nuevas se registran como
 `cliente`.
 
 ---
@@ -67,6 +68,22 @@ del brief, más el historial de pedidos y un botón para borrar los datos locale
 Centro de soporte con contadores por estado (total, pendientes, en revisión, solucionados),
 formulario de nuevo reporte —producto, asunto, descripción detallada y hasta 3 imágenes— y lista de
 tickets con filtros, búsqueda, comentarios y seguimiento.
+
+### Panel de ventas (rol `asesor`)
+Ruta `/ventas`, sólo visible con rol `asesor`. Reúne el resultado comercial y la comprobación de
+costos que el catálogo por sí solo no permite hacer:
+
+- **Resultado**: pedidos, ingresos, utilidad y margen, calculados contra los costos de proveedor
+  conocidos. Las partidas sin costo se excluyen del cálculo y se cuentan aparte.
+- **Comprobación de costos**: cobertura, servicios con problema y margen mínimo configurable.
+- **Tabla precio de venta contra costo del proveedor**: los 54 servicios con su costo, utilidad,
+  margen y una bandera —correcto, margen bajo, sin margen, pérdida o sin costo—, con filtros por
+  estado, departamento y búsqueda, y captura o corrección del costo en la misma fila.
+- **Sincronización**: importa costos en el formato del conector de proveedores y copia los actuales.
+- **Pedidos**: utilidad por pedido y cambio de estado (en proceso, completado, cancelado).
+
+Los costos de proveedor y su formato de intercambio están documentados en
+[`docs/costos-proveedor.md`](docs/costos-proveedor.md).
 
 ### Catálogo de descuentos
 Todos los departamentos con sus productos, precios y porcentaje de descuento, con índice rápido.
@@ -116,6 +133,7 @@ repositorio y despliega.
 | Qué | Dónde |
 | --- | --- |
 | Precios, productos y departamentos | `src/data/catalog.ts` |
+| Costos de proveedor y margen mínimo | `src/data/providerCosts.ts` |
 | Datos bancarios, WhatsApp y correo | `src/data/company.ts` |
 | Colores y tipografías | `src/index.css` (bloque `@theme`) |
 | Logotipo y favicon | `public/brand/` y `public/favicon.png` |
@@ -135,8 +153,8 @@ estado a un backend; la capa de datos está aislada en `src/lib/store.tsx` para 
 ```
 src/
 ├─ components/   Layout, iconos hairline, primitivas de UI
-├─ data/         catalog.ts (12 departamentos), company.ts
+├─ data/         catalog.ts (12 departamentos), providerCosts.ts, company.ts
 ├─ lib/          store.tsx (estado global + persistencia)
-├─ pages/        Home, Tienda, Carrito, Catalogo, Monedero, Soporte, Perfil, Acceder
+├─ pages/        Home, Tienda, Carrito, Catalogo, Monedero, Soporte, Ventas, Perfil, Acceder
 └─ index.css     Tokens de marca y capa de componentes
 ```
